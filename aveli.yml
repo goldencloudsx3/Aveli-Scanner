@@ -1,0 +1,20 @@
+# Aveli Scanner — default configuration
+# All values can be overridden with AVELI_<KEY> environment variables
+# or via CLI flags (see: aveli --help)
+
+# ── Concurrency ─────────────────────────────────────────────────────────────
+workers: 20                   # parallel HTTP workers
+requests_per_second: 20.0     # global rate cap (across all workers)
+request_timeout: 12           # seconds before a request is abandoned
+
+# ── Severity ────────────────────────────────────────────────────────────────
+# Report findings at or above this level: critical | high | medium | low | info
+min_severity: high
+
+# ── Checks ──────────────────────────────────────────────────────────────────
+check_headers: true           # analyse HTTP security headers
+check_content: true           # scan response body for secrets
+check_url_patterns: true      # flag sensitive URL paths (.env, .git, etc.)
+
+# ── HTTP ─────────────────────────────────────────────────────────────────────
+verify_ssl: false             # skip TLS cert validation (needed for staging sites)
