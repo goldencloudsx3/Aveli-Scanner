@@ -5,7 +5,7 @@ setup(
     version="1.0.0",
     description="Real-time internet-wide website vulnerability scanner",
     packages=find_packages(),
-    python_requires=">=3.11",
+    python_requires=">=3.10",
     install_requires=[
         "aiohttp>=3.9.0",
         "aiofiles>=23.0.0",

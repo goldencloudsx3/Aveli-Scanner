@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "aveli-scanner"
 version = "1.0.0"
 description = "Real-time internet-wide website vulnerability scanner"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "aiohttp>=3.9.0",
     "aiofiles>=23.0.0",
