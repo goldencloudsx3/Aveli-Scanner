@@ -9,8 +9,10 @@ that a site is newly deployed or updated.
 import asyncio
 import json
 import logging
+import ssl
 from typing import AsyncIterator
 
+import certifi
 import tldextract
 
 logger = logging.getLogger("aveli.ct_logs")
@@ -57,6 +59,8 @@ async def stream_ct_hostnames(
         logger.warning("websockets not installed; CT log streaming disabled. pip install websockets")
         return
 
+    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+
     retry_delay = 2
     while True:
         try:
@@ -66,6 +70,7 @@ async def stream_ct_hostnames(
                 ping_interval=30,
                 ping_timeout=10,
                 close_timeout=5,
+                ssl=ssl_ctx,
             ) as ws:
                 retry_delay = 2  # reset on successful connect
                 async for raw_msg in ws:

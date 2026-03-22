@@ -204,21 +204,21 @@ async def scan_worker(
                 if deduper.seen(url):
                     continue
 
-                # URL-pattern checks (no HTTP request needed)
-                if config.check_url_patterns:
-                    url_findings = scan_url(url)
-                    for f in url_findings:
-                        if f.severity in config.severity_filter:
-                            await result_queue.put(f)
-                            _update_finding_stats(stats, f)
-
-                # HTTP fetch
+                # HTTP fetch first — all checks require a verified 200 response
                 body, resp_headers, status = await _fetch(session, url, config, rate_limiter)
                 stats.urls_scanned += 1
 
                 if body is None and resp_headers is None:
                     stats.urls_errored += 1
                     continue
+
+                # URL-pattern checks — only flag if the file/endpoint actually exists (200)
+                if config.check_url_patterns and status == 200:
+                    url_findings = scan_url(url)
+                    for f in url_findings:
+                        if f.severity in config.severity_filter:
+                            await result_queue.put(f)
+                            _update_finding_stats(stats, f)
 
                 # Header analysis — only for successful responses to avoid false positives
                 if config.check_headers and resp_headers and status in (200, 206):
