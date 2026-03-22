@@ -151,14 +151,22 @@ class FindingLogger:
     def __init__(self, output_path: Optional[Path] = None):
         self._path = output_path
         self._count = 0
+        self._fh = None
+        if output_path:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            self._fh = output_path.open("a", buffering=1)  # line-buffered
 
     def log(self, finding: Finding) -> None:
-        if not self._path:
+        if not self._fh:
             return
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("a") as fh:
-            fh.write(json.dumps(finding.to_dict()) + "\n")
+        self._fh.write(json.dumps(finding.to_dict()) + "\n")
         self._count += 1
+
+    def close(self) -> None:
+        if self._fh:
+            self._fh.flush()
+            self._fh.close()
+            self._fh = None
 
     @property
     def count(self) -> int:
@@ -237,6 +245,7 @@ class TerminalReporter:
                 last_stats = time.time()
 
         # Final summary
+        self._logger.close()
         console.print(Rule("[bold]Scan complete[/bold]"))
         self.print_stats()
         if self._logger.count:

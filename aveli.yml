@@ -17,4 +17,4 @@ check_content: true           # scan response body for secrets
 check_url_patterns: true      # flag sensitive URL paths (.env, .git, etc.)
 
 # ── HTTP ─────────────────────────────────────────────────────────────────────
-verify_ssl: false             # skip TLS cert validation (needed for staging sites)
+verify_ssl: true              # verify TLS certificates; set false only for staging/internal targets

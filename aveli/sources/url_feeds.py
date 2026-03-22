@@ -33,12 +33,12 @@ async def stream_urlscan(
 ) -> None:
     """Poll URLScan.io for recently scanned pages matching the query."""
     base_url = "https://urlscan.io/api/v1/search/"
+    timeout = aiohttp.ClientTimeout(total=30)
 
-    while True:
-        try:
-            params = {"q": query, "size": str(max_results), "sort": "_score"}
-            timeout = aiohttp.ClientTimeout(total=30)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        while True:
+            try:
+                params = {"q": query, "size": str(max_results), "sort": "_score"}
                 async with session.get(base_url, params=params) as resp:
                     if resp.status == 200:
                         data = await resp.json()
@@ -47,10 +47,10 @@ async def stream_urlscan(
                             if url and queue.qsize() < max_queue_size:
                                 await queue.put(url)
                         logger.debug("URLScan.io yielded %d URLs", len(data.get("results", [])))
-        except Exception as exc:
-            logger.debug("URLScan feed error: %s", exc)
+            except Exception as exc:
+                logger.debug("URLScan feed error: %s", exc)
 
-        await asyncio.sleep(interval_seconds)
+            await asyncio.sleep(interval_seconds)
 
 
 # ---------------------------------------------------------------------------
@@ -64,11 +64,11 @@ async def stream_openphish(
 ) -> None:
     """Fetch OpenPhish feed and enqueue phishing URLs for credential-exposure scanning."""
     feed_url = "https://openphish.com/feed.txt"
+    timeout = aiohttp.ClientTimeout(total=30)
 
-    while True:
-        try:
-            timeout = aiohttp.ClientTimeout(total=30)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        while True:
+            try:
                 async with session.get(feed_url) as resp:
                     if resp.status == 200:
                         text = await resp.text()
@@ -79,10 +79,10 @@ async def stream_openphish(
                                 await queue.put(url)
                                 count += 1
                         logger.info("OpenPhish feed loaded %d URLs", count)
-        except Exception as exc:
-            logger.debug("OpenPhish feed error: %s", exc)
+            except Exception as exc:
+                logger.debug("OpenPhish feed error: %s", exc)
 
-        await asyncio.sleep(interval_seconds)
+            await asyncio.sleep(interval_seconds)
 
 
 # ---------------------------------------------------------------------------

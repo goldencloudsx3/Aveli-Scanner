@@ -37,7 +37,7 @@ def _is_interesting(hostname: str) -> bool:
     for kw in _HIGH_VALUE_KEYWORDS:
         if kw in hostname_lower:
             return True
-    return True  # Include everything; caller can filter further
+    return False
 
 
 async def stream_ct_hostnames(

@@ -7,8 +7,8 @@ and high-value domains.
 """
 
 import asyncio
+import json
 import logging
-from typing import AsyncIterator
 
 import aiohttp
 
@@ -56,7 +56,7 @@ async def query_sensitive_urls(
     max_queue_size: int = 5000,
 ) -> None:
     """Query Common Crawl CDX for known-sensitive URL patterns."""
-    connector = aiohttp.TCPConnector(limit=5, ssl=False)
+    connector = aiohttp.TCPConnector(limit=5)
     timeout = aiohttp.ClientTimeout(total=30)
 
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
@@ -79,7 +79,6 @@ async def query_sensitive_urls(
                         if not line.strip():
                             continue
                         try:
-                            import json
                             record = json.loads(line)
                             url = record.get("url", "")
                             if url and queue.qsize() < max_queue_size:

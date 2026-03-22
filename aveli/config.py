@@ -27,6 +27,15 @@ _SEVERITY_MAP = {
 }
 
 
+def _parse_bool(value) -> bool:
+    """Parse a boolean from a string or native bool/int value."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return bool(value)
+    return str(value).strip().lower() not in ("0", "false", "no", "off", "")
+
+
 def load_config(config_file: Optional[Path] = None) -> ScannerConfig:
     """Load ScannerConfig from YAML file and/or environment variables."""
     raw: dict = {}
@@ -60,8 +69,8 @@ def load_config(config_file: Optional[Path] = None) -> ScannerConfig:
         requests_per_second=rps,
         min_severity=min_sev,
         severity_filter=severity_filter,
-        check_headers=bool(int(_get("check_headers", 1))),
-        check_content=bool(int(_get("check_content", 1))),
-        check_url_patterns=bool(int(_get("check_url_patterns", 1))),
-        verify_ssl=bool(int(_get("verify_ssl", 0))),
+        check_headers=_parse_bool(_get("check_headers", 1)),
+        check_content=_parse_bool(_get("check_content", 1)),
+        check_url_patterns=_parse_bool(_get("check_url_patterns", 1)),
+        verify_ssl=_parse_bool(_get("verify_ssl", 1)),
     )

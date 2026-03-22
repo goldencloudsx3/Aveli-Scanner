@@ -44,7 +44,7 @@ class ScannerConfig:
         "Mozilla/5.0 (compatible; AveliScanner/1.0; +https://github.com/aveli/scanner)"
     )
     follow_redirects: bool = True
-    verify_ssl: bool = False
+    verify_ssl: bool = True
 
     # Which checks to run
     check_headers: bool = True
@@ -112,8 +112,11 @@ class UrlDeduper:
         key = self._normalise(url)
         if key in self._seen:
             return True
-        if len(self._seen) < self._max:
-            self._seen.add(key)
+        if len(self._seen) >= self._max:
+            # Cache full: evict ~10 % of entries to make room and prevent unbounded re-scanning
+            remove = set(list(self._seen)[: self._max // 10])
+            self._seen -= remove
+        self._seen.add(key)
         return False
 
     @staticmethod
@@ -192,7 +195,10 @@ async def scan_worker(
 
     async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
         while True:
-            url: str = await url_queue.get()
+            try:
+                url: str = await asyncio.wait_for(url_queue.get(), timeout=5.0)
+            except asyncio.TimeoutError:
+                continue
 
             try:
                 if deduper.seen(url):
@@ -214,8 +220,8 @@ async def scan_worker(
                     stats.urls_errored += 1
                     continue
 
-                # Header analysis
-                if config.check_headers and resp_headers:
+                # Header analysis — only for successful responses to avoid false positives
+                if config.check_headers and resp_headers and status in (200, 206):
                     header_findings = scan_headers(url, resp_headers)
                     for f in header_findings:
                         if f.severity in config.severity_filter:
@@ -335,10 +341,3 @@ class AveliScanner:
         for task in self._tasks:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
-
-    async def findings(self) -> Finding:
-        """Async generator that yields findings as they arrive."""
-        while True:
-            finding = await self.result_queue.get()
-            yield finding
-            self.result_queue.task_done()
