@@ -10,7 +10,6 @@ setup(
         "aiohttp>=3.9.0",
         "aiofiles>=23.0.0",
         "rich>=13.7.0",
-        "certstream>=1.10",
         "pyyaml>=6.0.1",
         "tldextract>=5.1.0",
         "regex>=2023.12.25",
