@@ -17,7 +17,7 @@ there is no secret string to measure; the finding is the URL itself.
 import math
 import re
 
-from .secrets import VulnCategory
+from .types import VulnCategory
 
 # ── Entropy thresholds ────────────────────────────────────────────────────
 # Real secrets in these categories must look sufficiently random.

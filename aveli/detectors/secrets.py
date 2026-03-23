@@ -6,63 +6,10 @@ and other high-value credentials in website content.
 """
 
 import re
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Optional
 
 from .entropy import passes_entropy_check
-
-
-class Severity(str, Enum):
-    CRITICAL = "CRITICAL"
-    HIGH = "HIGH"
-    MEDIUM = "MEDIUM"
-    LOW = "LOW"
-    INFO = "INFO"
-
-
-class VulnCategory(str, Enum):
-    EXPOSED_KEY = "Exposed API Key"
-    EXPOSED_SECRET = "Exposed Secret/Token"
-    PRIVATE_KEY = "Private Key / Certificate"
-    CRYPTO_SECRET = "Crypto / Web3 Secret"
-    DATABASE_CREDS = "Database Credentials"
-    CLOUD_CREDS = "Cloud Provider Credentials"
-    PAYMENT_KEY = "Payment Processor Key"
-    OAUTH_TOKEN = "OAuth / SSO Token"
-    JWT_TOKEN = "JWT Token"
-    SENSITIVE_FILE = "Sensitive File Exposure"
-    SECURITY_HEADER = "Missing Security Header"
-    OPEN_REDIRECT = "Open Redirect"
-    INFO_DISCLOSURE = "Information Disclosure"
-
-
-@dataclass
-class Finding:
-    url: str
-    vuln_type: str
-    category: VulnCategory
-    severity: Severity
-    description: str
-    evidence: str           # Redacted snippet of matching content
-    confidence: float       # 0.0 - 1.0
-    remediation: str
-    cvss_score: Optional[float] = None
-    tags: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict:
-        return {
-            "url": self.url,
-            "vuln_type": self.vuln_type,
-            "category": self.category.value,
-            "severity": self.severity.value,
-            "description": self.description,
-            "evidence": self.evidence,
-            "confidence": self.confidence,
-            "remediation": self.remediation,
-            "cvss_score": self.cvss_score,
-            "tags": self.tags,
-        }
+# Re-export shared types so existing callers (from .detectors.secrets import ...) keep working.
+from .types import Finding, Severity, VulnCategory  # noqa: F401
 
 
 def _redact(match: str, keep_prefix: int = 6, keep_suffix: int = 4) -> str:
@@ -477,12 +424,12 @@ def scan_content(url: str, content: str, max_findings: int = 50) -> list[Finding
     for compiled_re, name, category, severity, confidence, cvss, description, remediation, tags in _COMPILED:
         for match in compiled_re.finditer(content):
             raw = match.group(0)
-            # Use last group if the pattern has capture groups (to get the actual secret)
-            if match.lastindex and match.lastindex >= 1:
+            # Use last capture group if present (to get the actual secret, not the full match)
+            if match.lastindex:
                 try:
                     raw = match.group(match.lastindex)
                 except IndexError:
-                    raw = match.group(0)
+                    pass  # keep raw = match.group(0)
 
             if not passes_entropy_check(raw, category):
                 continue

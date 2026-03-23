@@ -185,7 +185,7 @@ async def scan_worker(
     rate_limiter: RateLimiter,
 ) -> None:
     """Single async worker: consume URLs, scan, emit findings."""
-    connector = aiohttp.TCPConnector(limit=0, ssl=False, ttl_dns_cache=300)
+    connector = aiohttp.TCPConnector(limit=0, ttl_dns_cache=300)
     headers = {
         "User-Agent": config.user_agent,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",

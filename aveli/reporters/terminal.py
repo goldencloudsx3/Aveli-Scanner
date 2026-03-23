@@ -175,6 +175,10 @@ class FindingLogger:
     def count(self) -> int:
         return self._count
 
+    @property
+    def path(self) -> Optional[Path]:
+        return self._path
+
 
 # ---------------------------------------------------------------------------
 # Terminal reporter (main live display)
@@ -190,13 +194,11 @@ class TerminalReporter:
         stats: ScanStats,
         url_queue_ref,
         output_file: Optional[Path] = None,
-        show_medium: bool = False,
         db: Optional["FindingsDB"] = None,
     ):
         self._stats = stats
         self._url_queue = url_queue_ref
         self._logger = FindingLogger(output_file)
-        self._show_medium = show_medium
         self._finding_count = 0
         self._db = db
         self._skipped_dupes = 0
@@ -260,7 +262,7 @@ class TerminalReporter:
         console.print(Rule("[bold]Scan complete[/bold]"))
         self.print_stats()
         if self._logger.count:
-            console.print(f"[green]Findings saved to {self._logger._path}[/green]")
+            console.print(f"[green]Findings saved to {self._logger.path}[/green]")
         if self._db and self._skipped_dupes:
             console.print(
                 f"[dim]{self._skipped_dupes} duplicate finding(s) suppressed "

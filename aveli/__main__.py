@@ -177,7 +177,6 @@ async def _run(
         stats=scanner.stats,
         url_queue_ref=scanner.url_queue,
         output_file=output_path,
-        show_medium=(scan_config.min_severity == Severity.MEDIUM),
         db=db,
     )
 
