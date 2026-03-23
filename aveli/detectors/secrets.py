@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
+from .entropy import passes_entropy_check
+
 
 class Severity(str, Enum):
     CRITICAL = "CRITICAL"
@@ -481,6 +483,9 @@ def scan_content(url: str, content: str, max_findings: int = 50) -> list[Finding
                     raw = match.group(match.lastindex)
                 except IndexError:
                     raw = match.group(0)
+
+            if not passes_entropy_check(raw, category):
+                continue
 
             evidence = _redact(raw)
 
