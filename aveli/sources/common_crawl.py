@@ -14,9 +14,10 @@ import aiohttp
 
 logger = logging.getLogger("aveli.common_crawl")
 
-# Common Crawl CDX API endpoint (always points to the latest index)
-CDX_API = "https://index.commoncrawl.org/CC-MAIN-2024-51-index"
+# Common Crawl CDX API — collinfo.json lists all available indexes newest-first
 CDX_SEARCH = "https://index.commoncrawl.org/collinfo.json"
+# Fallback: a recent known-good index (updated periodically)
+CDX_API_FALLBACK = "https://index.commoncrawl.org/CC-MAIN-2025-08-index"
 
 # Sensitive URL patterns to hunt for in the crawl index
 _SENSITIVE_PATTERNS = [
@@ -44,10 +45,14 @@ async def _get_latest_index(session: aiohttp.ClientSession) -> str:
             if resp.status == 200:
                 data = await resp.json()
                 if data:
-                    return data[0].get("cdx-api", CDX_API)
+                    index_url = data[0].get("cdx-api", "")
+                    if index_url:
+                        logger.info("Using Common Crawl index: %s", index_url)
+                        return index_url
     except Exception as exc:
-        logger.debug("Failed to fetch CC index list: %s", exc)
-    return CDX_API
+        logger.warning("Failed to fetch CC index list: %s — using fallback index", exc)
+    logger.info("Using Common Crawl fallback index: %s", CDX_API_FALLBACK)
+    return CDX_API_FALLBACK
 
 
 async def query_sensitive_urls(

@@ -145,10 +145,21 @@ async def probe_top_sites(
         logger.debug("Tranco fetch error: %s", exc)
 
     if not top_domains:
-        # Hardcoded fallback seed — common high-value targets
+        # Hardcoded fallback seed — common high-value targets across multiple sectors
         top_domains = [
-            "github.com", "gitlab.com", "npmjs.com", "pypi.org",
+            # Dev platforms
+            "github.com", "gitlab.com", "bitbucket.org", "npmjs.com",
+            "pypi.org", "hub.docker.com", "registry.npmjs.org",
+            # Cloud / infra
+            "aws.amazon.com", "console.cloud.google.com", "portal.azure.com",
+            "digitalocean.com", "heroku.com", "netlify.com", "vercel.com",
+            # Crypto / finance
             "coinbase.com", "binance.com", "kraken.com", "opensea.io",
+            "blockchain.com", "etherscan.io",
+            # E-commerce / payments
+            "shopify.com", "stripe.com", "paypal.com", "square.com",
+            # Popular web stacks often misconfigured
+            "wordpress.com", "wp.com", "joomla.org", "drupal.org",
         ]
 
     for domain in top_domains:
