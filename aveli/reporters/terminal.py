@@ -10,7 +10,10 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from ..db import FindingsDB
 
 from rich.console import Console
 from rich.layout import Layout
@@ -188,12 +191,15 @@ class TerminalReporter:
         url_queue_ref,
         output_file: Optional[Path] = None,
         show_medium: bool = False,
+        db: Optional["FindingsDB"] = None,
     ):
         self._stats = stats
         self._url_queue = url_queue_ref
         self._logger = FindingLogger(output_file)
         self._show_medium = show_medium
         self._finding_count = 0
+        self._db = db
+        self._skipped_dupes = 0
 
     def print_banner(self) -> None:
         banner = """
@@ -211,7 +217,12 @@ class TerminalReporter:
         console.print(Rule("[dim]Initialising sources…[/dim]"))
 
     def print_finding(self, finding: Finding) -> None:
-        """Print a finding panel to the terminal."""
+        """Print a finding panel to the terminal, skipping known duplicates."""
+        if self._db:
+            is_new = self._db.insert_or_update(finding)
+            if not is_new:
+                self._skipped_dupes += 1
+                return
         self._finding_count += 1
         self._logger.log(finding)
         console.print(render_finding(finding))
@@ -250,3 +261,8 @@ class TerminalReporter:
         self.print_stats()
         if self._logger.count:
             console.print(f"[green]Findings saved to {self._logger._path}[/green]")
+        if self._db and self._skipped_dupes:
+            console.print(
+                f"[dim]{self._skipped_dupes} duplicate finding(s) suppressed "
+                f"(already in database)[/dim]"
+            )

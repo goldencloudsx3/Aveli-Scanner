@@ -16,6 +16,7 @@ setup(
         "httpx>=0.26.0",
         "click>=8.1.7",
         "colorama>=0.4.6",
+        "certifi>=2024.2.2",
         "python-dotenv>=1.0.0",
         "websockets>=12.0",
         "ujson>=5.9.0",
