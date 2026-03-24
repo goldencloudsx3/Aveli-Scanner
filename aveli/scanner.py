@@ -44,7 +44,7 @@ class ScannerConfig:
         "Mozilla/5.0 (compatible; AveliScanner/1.0; +https://github.com/aveli/scanner)"
     )
     follow_redirects: bool = True
-    verify_ssl: bool = True
+    verify_ssl: bool = False
 
     # Which checks to run
     check_headers: bool = True
@@ -139,38 +139,45 @@ async def _fetch(
     await rate_limiter.acquire()
 
     for attempt in range(config.max_retries + 1):
-        try:
-            async with session.get(
-                url,
-                timeout=aiohttp.ClientTimeout(total=config.request_timeout),
-                allow_redirects=config.follow_redirects,
-                ssl=config.verify_ssl,
-            ) as resp:
-                headers = dict(resp.headers)
-                status = resp.status
+        # When SSL verification is enabled and fails, fall back to no-verify so
+        # sites with self-signed or misconfigured certs still get scanned.
+        for ssl_opt in ([True, False] if config.verify_ssl else [False]):
+            try:
+                async with session.get(
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=config.request_timeout),
+                    allow_redirects=config.follow_redirects,
+                    ssl=ssl_opt,
+                ) as resp:
+                    headers = dict(resp.headers)
+                    status = resp.status
 
-                if status not in (200, 206):
-                    return None, headers, status
+                    if status not in (200, 206):
+                        return None, headers, status
 
-                # Read up to max_content_bytes
-                body = await resp.content.read(config.max_content_bytes)
-                try:
-                    text = body.decode("utf-8", errors="replace")
-                except Exception:
-                    text = ""
+                    # Read up to max_content_bytes
+                    body = await resp.content.read(config.max_content_bytes)
+                    try:
+                        text = body.decode("utf-8", errors="replace")
+                    except Exception:
+                        text = ""
 
-                return text, headers, status
+                    return text, headers, status
 
-        except asyncio.TimeoutError:
-            return None, None, 0
-        except aiohttp.ClientConnectorError:
-            return None, None, 0
-        except Exception as exc:
-            if attempt < config.max_retries:
-                await asyncio.sleep(1)
-            else:
-                logger.debug("Fetch error for %s: %s", url, exc)
+            except asyncio.TimeoutError:
                 return None, None, 0
+            except aiohttp.ClientConnectorSSLError:
+                # SSL verification failed — try the no-verify fallback if available
+                continue
+            except aiohttp.ClientConnectorError:
+                return None, None, 0
+            except Exception as exc:
+                if attempt < config.max_retries:
+                    await asyncio.sleep(1)
+                else:
+                    logger.debug("Fetch error for %s: %s", url, exc)
+                    return None, None, 0
+            break  # generic exception + retries remaining: exit ssl loop, retry outer
 
     return None, None, 0
 
@@ -220,8 +227,11 @@ async def scan_worker(
                             await result_queue.put(f)
                             _update_finding_stats(stats, f)
 
-                # Header analysis — only for successful responses to avoid false positives
-                if config.check_headers and resp_headers and status in (200, 206):
+                # Header analysis — run on any response where headers were returned.
+                # Security headers (HSTS, CSP, etc.) are present or absent regardless
+                # of HTTP status; a 403 or 404 from a misconfigured server still
+                # reveals missing HSTS just as clearly as a 200.
+                if config.check_headers and resp_headers:
                     header_findings = scan_headers(url, resp_headers)
                     for f in header_findings:
                         if f.severity in config.severity_filter:
