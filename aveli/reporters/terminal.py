@@ -55,9 +55,10 @@ _CATEGORY_ICON: dict[VulnCategory, str] = {
     VulnCategory.OAUTH_TOKEN:    "🔓",
     VulnCategory.JWT_TOKEN:      "🎫",
     VulnCategory.SENSITIVE_FILE: "📄",
-    VulnCategory.SECURITY_HEADER:"🛡 ",
-    VulnCategory.OPEN_REDIRECT:  "↩ ",
-    VulnCategory.INFO_DISCLOSURE:"ℹ️ ",
+    VulnCategory.SECURITY_HEADER:    "🛡 ",
+    VulnCategory.OPEN_REDIRECT:      "↩ ",
+    VulnCategory.INFO_DISCLOSURE:    "ℹ️ ",
+    VulnCategory.S3_MISCONFIGURATION:"🪣 ",
 }
 
 

@@ -32,6 +32,7 @@ class VulnCategory(str, Enum):
     SECURITY_HEADER = "Missing Security Header"
     OPEN_REDIRECT = "Open Redirect"
     INFO_DISCLOSURE = "Information Disclosure"
+    S3_MISCONFIGURATION = "S3 Bucket Misconfiguration"
 
 
 @dataclass

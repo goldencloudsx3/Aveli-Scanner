@@ -16,6 +16,7 @@ import aiohttp
 
 from .detectors.secrets import Finding, Severity, scan_content, scan_url
 from .detectors.headers import scan_headers
+from .detectors.s3 import scan_s3_response, is_s3_url
 
 logger = logging.getLogger("aveli.scanner")
 
@@ -50,6 +51,7 @@ class ScannerConfig:
     check_headers: bool = True
     check_content: bool = True
     check_url_patterns: bool = True
+    check_s3: bool = True
 
     # Severity filter — only report at or above this level
     severity_filter: set[Severity] = field(default_factory=lambda: {
@@ -246,6 +248,14 @@ async def scan_worker(
                             await result_queue.put(f)
                             _update_finding_stats(stats, f)
 
+                # S3 misconfiguration check (public bucket listing, sensitive files)
+                if config.check_s3 and is_s3_url(url):
+                    s3_findings = scan_s3_response(url, body, status)
+                    for f in s3_findings:
+                        if f.severity in config.severity_filter:
+                            await result_queue.put(f)
+                            _update_finding_stats(stats, f)
+
             except Exception as exc:
                 logger.debug("Worker %d error on %s: %s", worker_id, url, exc)
                 stats.urls_errored += 1
@@ -286,6 +296,7 @@ class AveliScanner:
         enable_urlscan: bool = True,
         enable_openphish: bool = False,
         enable_top_sites_probe: bool = True,
+        enable_s3: bool = True,
         extra_urls: Optional[list[str]] = None,
     ) -> None:
         """Start all source tasks and worker pool."""
@@ -327,6 +338,14 @@ class AveliScanner:
             from .sources.url_feeds import probe_top_sites
             self._tasks.append(
                 asyncio.create_task(probe_top_sites(self.url_queue), name="top-sites")
+            )
+
+        if enable_s3:
+            from .sources.s3_buckets import stream_s3_buckets
+            self._tasks.append(
+                asyncio.create_task(
+                    stream_s3_buckets(self.url_queue), name="s3-buckets"
+                )
             )
 
         # Worker pool

@@ -71,6 +71,7 @@ def cli() -> None:
 @click.option("--no-probe",       is_flag=True,  help="Disable top-sites sensitive-path probe.")
 @click.option("--no-headers",     is_flag=True,  help="Skip HTTP security header checks.")
 @click.option("--no-content",     is_flag=True,  help="Skip response body secret scanning.")
+@click.option("--no-s3",          is_flag=True,  help="Disable S3 public-bucket discovery and checks.")
 @click.option("--timeout",        default=12,    show_default=True, help="HTTP request timeout (seconds).")
 @click.option("--verbose", "-v",  is_flag=True,  help="Enable verbose debug logging.")
 @click.option("--stats-interval", default=15,    show_default=True, help="Stats print interval (seconds).")
@@ -89,6 +90,7 @@ def scan_cmd(
     no_probe: bool,
     no_headers: bool,
     no_content: bool,
+    no_s3: bool,
     timeout: int,
     verbose: bool,
     stats_interval: int,
@@ -117,6 +119,7 @@ def scan_cmd(
     scan_config.request_timeout = timeout
     scan_config.check_headers = not no_headers
     scan_config.check_content = not no_content
+    scan_config.check_s3 = not no_s3
 
     severity_map = {
         "critical": Severity.CRITICAL,
@@ -148,6 +151,7 @@ def scan_cmd(
             enable_urlscan=not no_urlscan,
             enable_openphish=openphish,
             enable_probe=not no_probe,
+            enable_s3=not no_s3,
             extra_urls=extra_urls,
             output_path=Path(output) if output else None,
             db_path=Path(db) if db else None,
@@ -163,6 +167,7 @@ async def _run(
     enable_urlscan: bool,
     enable_openphish: bool,
     enable_probe: bool,
+    enable_s3: bool,
     extra_urls: list[str],
     output_path: Optional[Path],
     db_path: Optional[Path],
@@ -186,6 +191,7 @@ async def _run(
         enable_urlscan=enable_urlscan,
         enable_openphish=enable_openphish,
         enable_top_sites_probe=enable_probe,
+        enable_s3=enable_s3,
         extra_urls=extra_urls,
     )
 
