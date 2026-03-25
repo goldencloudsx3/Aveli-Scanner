@@ -219,8 +219,9 @@ async def scan_worker(
                 continue
 
             # URL-pattern check (sensitive file paths that returned 200)
+            # Pass body so the validator can confirm the response is actually the expected file type.
             if config.check_url_patterns and status == 200:
-                for f in scan_url(url):
+                for f in scan_url(url, body or ""):
                     if f.severity in config.severity_filter:
                         await result_queue.put(f)
                         _tally(stats, f)

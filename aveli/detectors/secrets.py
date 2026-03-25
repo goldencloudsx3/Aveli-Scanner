@@ -290,17 +290,6 @@ _PATTERN_REGISTRY: list[tuple] = [
         ["ethereum", "web3", "crypto"],
     ),
     (
-        r"\b(?:abandon|ability|able|about|above|absent|absorb|abstract|absurd|abuse|access|accident|account|accuse|achieve|acid|acoustic|acquire|across|act|action|actor|actress|actual|adapt|add|addict|address|adjust|admit|adult|advance|advice|aerobic|afford|afraid|again|age|agent|agree|ahead|aim|air|airport|aisle|alarm|album|alcohol|alert|alien|all|alley|allow|almost|alone|alpha|already|also|alter|always|amateur|amazing|among|amount|amused|analyst|anchor|ancient|anger|angle|angry|animal|ankle|announce|annual|another|answer|antenna|antique|anxiety|any|apart|apology|appear|apple|approve|april|arch|arctic|area|arena|argue|arm|armed|armor|army|around|arrange|arrest|arrive|arrow|art|artefact|artist|artwork|ask|aspect|assault|asset|assist|assume|asthma|athlete|atom|attack|attend|attitude|attract|auction|audit|august|aunt|author|auto|autumn|average|avocado|avoid|awake|aware|away|awesome|awful|awkward|axis)\b(?:\s+\b\w+\b){11,23}",
-        "BIP39 Mnemonic Seed Phrase (12–24 words)",
-        VulnCategory.CRYPTO_SECRET,
-        Severity.CRITICAL,
-        0.80,
-        10.0,
-        "Possible BIP39 mnemonic seed phrase found. Controls ALL wallets derived from this seed.",
-        "Move all funds from derived wallets immediately. Seed phrase cannot be rotated — funds must be moved.",
-        ["bip39", "mnemonic", "crypto", "wallet", "seed"],
-    ),
-    (
         r"(?i)(solana[_\-]?private[_\-]?key|sol[_\-]?secret)\s*[=:]\s*['\"]?([1-9A-HJ-NP-Za-km-z]{87,88})['\"]?",
         "Solana Private Key",
         VulnCategory.CRYPTO_SECRET,
@@ -526,21 +515,79 @@ _SENSITIVE_URL_PATTERNS: list[tuple] = [
 ]
 
 
-def scan_url(url: str) -> list[Finding]:
-    """Check URL path for sensitive file/endpoint patterns."""
+# Body content validators — confirm the response body actually matches the expected file type.
+# This prevents false positives from SPA catch-all routing (sites returning HTTP 200 for any URL).
+_ENV_CONTENT_RE = re.compile(r"(?m)^(?:export\s+)?[A-Z_][A-Z0-9_]{2,}\s*=", re.MULTILINE)
+_GIT_CONFIG_RE  = re.compile(r"\[core\]|\[remote|repositoryformatversion", re.IGNORECASE)
+_PHP_CONFIG_RE  = re.compile(r"<\?php|DB_NAME|DB_PASSWORD|define\s*\(", re.IGNORECASE)
+_SQL_DUMP_RE    = re.compile(r"CREATE TABLE|INSERT INTO|-- MySQL dump|LOCK TABLES", re.IGNORECASE)
+_YAML_CREDS_RE  = re.compile(r"(?m)^\s*(?:password|secret|token|key|database|username)\s*:", re.MULTILINE | re.IGNORECASE)
+_JSON_CREDS_RE  = re.compile(r'"(?:password|secret|token|api_key|access_key|private_key)"\s*:', re.IGNORECASE)
+_NPMRC_RE       = re.compile(r"//registry\.npmjs\.org|_authToken|_auth\s*=", re.IGNORECASE)
+
+_URL_BODY_VALIDATORS: dict[str, re.Pattern] = {
+    "Exposed .env File":          _ENV_CONTENT_RE,
+    "Exposed Configuration File": None,   # per-URL logic below
+    "Exposed VCS Repository":     _GIT_CONFIG_RE,
+    "Possible Backup/Dump File":  _SQL_DUMP_RE,
+}
+
+
+def _validate_body_for_url(name: str, url: str, body: str) -> bool:
+    """Return True if body content matches what we expect for this URL pattern."""
+    url_lower = url.lower()
+
+    if name == "Exposed .env File":
+        return bool(_ENV_CONTENT_RE.search(body))
+
+    if name == "Exposed VCS Repository":
+        return bool(_GIT_CONFIG_RE.search(body))
+
+    if name == "Possible Backup/Dump File":
+        return bool(_SQL_DUMP_RE.search(body))
+
+    if name == "Exposed Configuration File":
+        if "wp-config.php" in url_lower or "config.php" in url_lower or "settings.php" in url_lower:
+            return bool(_PHP_CONFIG_RE.search(body))
+        if "database.yml" in url_lower or "secrets.yml" in url_lower:
+            return bool(_YAML_CREDS_RE.search(body))
+        if "credentials.json" in url_lower:
+            return bool(_JSON_CREDS_RE.search(body))
+        if ".npmrc" in url_lower or ".pypirc" in url_lower:
+            return bool(_NPMRC_RE.search(body))
+        if ".aws/credentials" in url_lower:
+            return bool(re.search(r"aws_access_key_id|aws_secret_access_key", body, re.IGNORECASE))
+        return False   # unknown subtype — reject to avoid false positives
+
+    # PHP info, GraphQL — URL match + 200 is sufficient signal
+    return True
+
+
+def scan_url(url: str, body: str = "") -> list[Finding]:
+    """Check URL path for sensitive file/endpoint patterns.
+
+    When body is provided (non-empty), validate that the response content
+    actually matches the expected file type.  This eliminates false positives
+    caused by SPA catch-all routing that returns HTTP 200 for any URL.
+    """
     findings: list[Finding] = []
     for compiled_re, name, category, severity, confidence, cvss, description, remediation, tags in _SENSITIVE_URL_PATTERNS:
-        if compiled_re.search(url):
-            findings.append(Finding(
-                url=url,
-                vuln_type=name,
-                category=category,
-                severity=severity,
-                description=description,
-                evidence=f"URL: {url}",
-                confidence=confidence,
-                remediation=remediation,
-                cvss_score=cvss,
-                tags=tags,
-            ))
+        if not compiled_re.search(url):
+            continue
+        # Body validation: skip findings where body doesn't match expected content
+        if body and name in _URL_BODY_VALIDATORS:
+            if not _validate_body_for_url(name, url, body):
+                continue
+        findings.append(Finding(
+            url=url,
+            vuln_type=name,
+            category=category,
+            severity=severity,
+            description=description,
+            evidence=f"URL: {url}",
+            confidence=confidence,
+            remediation=remediation,
+            cvss_score=cvss,
+            tags=tags,
+        ))
     return findings
