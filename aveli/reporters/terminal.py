@@ -1,8 +1,11 @@
 """
-Rich terminal reporter.
+Terminal reporter — clean, informative live dashboard.
 
-Renders findings and live stats as a beautiful, colour-coded dashboard
-in the terminal using the `rich` library.
+Shows:
+  - Live stats bar (scanned, queued, rate, findings by severity)
+  - Error rate so you can see if sources are working
+  - Each finding as a clear, readable panel
+  - Source status log every stats interval
 """
 
 import asyncio
@@ -16,15 +19,12 @@ if TYPE_CHECKING:
     from ..db import FindingsDB
 
 from rich.console import Console
-from rich.layout import Layout
-from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich import box
-from rich.align import Align
-from rich.columns import Columns
 from rich.rule import Rule
+from rich.columns import Columns
 
 from ..detectors.secrets import Finding, Severity, VulnCategory
 from ..scanner import ScanStats
@@ -37,24 +37,32 @@ console = Console()
 # ---------------------------------------------------------------------------
 
 _SEVERITY_STYLE: dict[Severity, tuple[str, str]] = {
-    Severity.CRITICAL: ("bold white on red",       "🔴 CRITICAL"),
-    Severity.HIGH:     ("bold red",                 "🟠 HIGH    "),
-    Severity.MEDIUM:   ("bold yellow",              "🟡 MEDIUM  "),
-    Severity.LOW:      ("dim cyan",                 "🔵 LOW     "),
-    Severity.INFO:     ("dim",                      "⚪ INFO    "),
+    Severity.CRITICAL: ("bold white on red",   "CRITICAL"),
+    Severity.HIGH:     ("bold red",             "HIGH    "),
+    Severity.MEDIUM:   ("bold yellow",          "MEDIUM  "),
+    Severity.LOW:      ("dim cyan",             "LOW     "),
+    Severity.INFO:     ("dim",                  "INFO    "),
+}
+
+_SEVERITY_BADGE: dict[Severity, str] = {
+    Severity.CRITICAL: "[bold white on red] CRITICAL [/]",
+    Severity.HIGH:     "[bold red] HIGH [/]",
+    Severity.MEDIUM:   "[bold yellow] MEDIUM [/]",
+    Severity.LOW:      "[cyan] LOW [/]",
+    Severity.INFO:     "[dim] INFO [/]",
 }
 
 _CATEGORY_ICON: dict[VulnCategory, str] = {
-    VulnCategory.EXPOSED_KEY:    "🔑",
-    VulnCategory.EXPOSED_SECRET: "🔐",
-    VulnCategory.PRIVATE_KEY:    "🗝 ",
-    VulnCategory.CRYPTO_SECRET:  "₿ ",
-    VulnCategory.DATABASE_CREDS: "🗄 ",
-    VulnCategory.CLOUD_CREDS:    "☁️ ",
-    VulnCategory.PAYMENT_KEY:    "💳",
-    VulnCategory.OAUTH_TOKEN:    "🔓",
-    VulnCategory.JWT_TOKEN:      "🎫",
-    VulnCategory.SENSITIVE_FILE: "📄",
+    VulnCategory.EXPOSED_KEY:        "🔑",
+    VulnCategory.EXPOSED_SECRET:     "🔐",
+    VulnCategory.PRIVATE_KEY:        "🗝 ",
+    VulnCategory.CRYPTO_SECRET:      "₿ ",
+    VulnCategory.DATABASE_CREDS:     "🗄 ",
+    VulnCategory.CLOUD_CREDS:        "☁️ ",
+    VulnCategory.PAYMENT_KEY:        "💳",
+    VulnCategory.OAUTH_TOKEN:        "🔓",
+    VulnCategory.JWT_TOKEN:          "🎫",
+    VulnCategory.SENSITIVE_FILE:     "📄",
     VulnCategory.SECURITY_HEADER:    "🛡 ",
     VulnCategory.OPEN_REDIRECT:      "↩ ",
     VulnCategory.INFO_DISCLOSURE:    "ℹ️ ",
@@ -62,89 +70,103 @@ _CATEGORY_ICON: dict[VulnCategory, str] = {
 }
 
 
-def _severity_text(severity: Severity) -> Text:
-    style, label = _SEVERITY_STYLE[severity]
-    return Text(label, style=style)
-
-
-def _truncate(s: str, max_len: int = 70) -> str:
+def _truncate(s: str, max_len: int = 80) -> str:
     return s if len(s) <= max_len else s[:max_len - 1] + "…"
 
 
 # ---------------------------------------------------------------------------
-# Finding card
+# Finding panel
 # ---------------------------------------------------------------------------
 
-def render_finding(finding: Finding) -> Panel:
-    """Render a single finding as a rich Panel."""
-    style, _ = _SEVERITY_STYLE[finding.severity]
+def render_finding(finding: Finding, count: int) -> Panel:
     icon = _CATEGORY_ICON.get(finding.category, "⚠ ")
     ts = datetime.now().strftime("%H:%M:%S")
+    badge = _SEVERITY_BADGE[finding.severity]
+    border = "red bold" if finding.severity == Severity.CRITICAL else (
+        "yellow" if finding.severity == Severity.HIGH else "cyan"
+    )
 
-    content = Table.grid(padding=(0, 1))
-    content.add_column(style="bold", min_width=14)
-    content.add_column()
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="bold dim", min_width=12)
+    grid.add_column()
 
-    content.add_row("URL",         Text(_truncate(finding.url, 90), style="link " + finding.url))
-    content.add_row("Type",        f"{icon} {finding.vuln_type}")
-    content.add_row("Category",    finding.category.value)
-    content.add_row("Evidence",    Text(finding.evidence, style="yellow"))
-    content.add_row("Description", Text(_truncate(finding.description, 100), style="dim"))
-    content.add_row("Fix",         Text(_truncate(finding.remediation, 100), style="italic green"))
-    content.add_row("Confidence",  f"{finding.confidence * 100:.0f}%")
+    grid.add_row("URL",         Text(_truncate(finding.url, 90), style="bright_cyan underline"))
+    grid.add_row("Type",        f"{icon} {finding.vuln_type}")
+    grid.add_row("Evidence",    Text(finding.evidence, style="yellow"))
+    grid.add_row("Fix",         Text(_truncate(finding.remediation, 90), style="green"))
     if finding.cvss_score is not None:
-        content.add_row("CVSS",    f"{finding.cvss_score:.1f}/10.0")
+        grid.add_row("CVSS",    f"{finding.cvss_score:.1f} / 10.0")
+    grid.add_row("Confidence",  f"{finding.confidence * 100:.0f}%")
     if finding.tags:
-        content.add_row("Tags",    " ".join(f"[dim]#{t}[/dim]" for t in finding.tags))
+        grid.add_row("Tags",    " ".join(f"#{t}" for t in finding.tags))
 
-    border_style = "red bold" if finding.severity == Severity.CRITICAL else "yellow"
     return Panel(
-        content,
-        title=f"[{style}] {_severity_style_label(finding.severity)} [/] [{ts}]",
-        border_style=border_style,
+        grid,
+        title=f"[dim]#{count}[/dim]  {badge}  [dim]{ts}[/dim]",
+        border_style=border,
         expand=True,
+        padding=(0, 1),
     )
 
 
-def _severity_style_label(severity: Severity) -> str:
-    _, label = _SEVERITY_STYLE[severity]
-    return label.strip()
-
-
 # ---------------------------------------------------------------------------
-# Stats header
+# Stats bar
 # ---------------------------------------------------------------------------
 
-def render_stats_bar(stats: ScanStats, queue_size: int) -> Panel:
+def render_stats(stats: ScanStats, queue_size: int) -> Panel:
     elapsed = stats.elapsed
     hrs, rem = divmod(int(elapsed), 3600)
     mins, secs = divmod(rem, 60)
 
-    grid = Table.grid(expand=True, padding=(0, 3))
-    grid.add_column(justify="center")
-    grid.add_column(justify="center")
-    grid.add_column(justify="center")
-    grid.add_column(justify="center")
-    grid.add_column(justify="center")
-    grid.add_column(justify="center")
-    grid.add_column(justify="center")
+    error_rate = (
+        f"{stats.urls_errored / stats.urls_scanned * 100:.0f}% err"
+        if stats.urls_scanned > 0 else "—"
+    )
+
+    grid = Table.grid(expand=True, padding=(0, 2))
+    for _ in range(8):
+        grid.add_column(justify="center")
 
     grid.add_row(
         Text(f"⏱  {hrs:02d}:{mins:02d}:{secs:02d}", style="bold cyan"),
-        Text(f"🔍 {stats.urls_scanned:,} scanned", style="bold white"),
-        Text(f"📡 {queue_size:,} queued", style="dim white"),
-        Text(f"⚡ {stats.rate:.1f}/s", style="bold green"),
-        Text(f"🔴 {stats.findings_critical} CRITICAL", style="bold red"),
-        Text(f"🟠 {stats.findings_high} HIGH", style="bold yellow"),
-        Text(f"⚠  {stats.findings_total} total findings", style="bold white"),
+        Text(f"🔍  {stats.urls_scanned:,}  scanned", style="bold white"),
+        Text(f"📡  {queue_size:,}  queued", style="white"),
+        Text(f"⚡  {stats.rate:.1f}/s", style="bold green"),
+        Text(f"❌  {error_rate}", style="dim red"),
+        Text(f"🔴  {stats.findings_critical}  CRIT", style="bold red"),
+        Text(f"🟠  {stats.findings_high}  HIGH", style="bold yellow"),
+        Text(f"⚠   {stats.findings_total}  total", style="bold white"),
     )
 
     return Panel(
         grid,
-        title="[bold blue]  AVELI SCANNER — Real-Time Vulnerability Intelligence[/]",
+        title="[bold blue]AVELI SCANNER — Real-Time Vulnerability Intelligence[/bold blue]",
         border_style="blue",
         box=box.DOUBLE_EDGE,
+        padding=(0, 1),
     )
+
+
+# ---------------------------------------------------------------------------
+# Source status
+# ---------------------------------------------------------------------------
+
+def print_source_status(queue_size: int, stats: ScanStats) -> None:
+    """Print a one-line source health summary."""
+    if stats.urls_scanned == 0:
+        console.print(
+            "[dim yellow]⏳ Waiting for sources to deliver URLs…  "
+            "(crt.sh polls every 60s, Wayback every 30min, Tranco every 10min)[/dim yellow]"
+        )
+    elif queue_size == 0:
+        console.print(
+            "[dim yellow]⚠  Queue empty — sources may be sleeping. "
+            f"Scanned so far: {stats.urls_scanned:,}  Errors: {stats.urls_errored:,}[/dim yellow]"
+        )
+    else:
+        console.print(
+            f"[dim green]✓  {queue_size:,} URLs queued — workers active[/dim green]"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +180,7 @@ class FindingLogger:
         self._fh = None
         if output_path:
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            self._fh = output_path.open("a", buffering=1)  # line-buffered
+            self._fh = output_path.open("a", buffering=1)
 
     def log(self, finding: Finding) -> None:
         if not self._fh:
@@ -182,14 +204,10 @@ class FindingLogger:
 
 
 # ---------------------------------------------------------------------------
-# Terminal reporter (main live display)
+# Terminal reporter
 # ---------------------------------------------------------------------------
 
 class TerminalReporter:
-    """
-    Consumes findings from an async queue and renders them live in the terminal.
-    """
-
     def __init__(
         self,
         stats: ScanStats,
@@ -205,22 +223,57 @@ class TerminalReporter:
         self._skipped_dupes = 0
 
     def print_banner(self) -> None:
-        banner = """
-[bold red]
-    ___         ___  _    ___   ___
-   / _ \\       / _ \\| |  |_ _| / __|___ __ _ _ _  _ _  ___ _ _
-  | (_) |___  | (_) | |__ | |  \\__ \\ / _/ _` | ' \\| ' \\/ -_) '_|
-   \\__,_/ _ \\  \\__\\_\\____|___| |___/ \\__\\__,_|_||_|_||_\\___|_|
-        |___/
-[/bold red]
-[dim]Real-time website vulnerability scanner | CT Logs · Common Crawl · URLScan[/dim]
-[dim]Monitors for: Exposed Keys · Crypto Secrets · Payment Creds · Private Keys · DB Creds[/dim]
-        """
-        console.print(banner)
-        console.print(Rule("[dim]Initialising sources…[/dim]"))
+        console.print()
+        console.print(
+            "[bold red]"
+            "  ▄▄▄·  ▌ ▐· ▄▄▄ .▄▄▌  ▪  \n"
+            "  ▐█ ▀█ ▪█·█▌ ▀▄.▀·██•  ██ \n"
+            "  ▄█▀▀█ ▐█▐█• ▐▀▀▪▄██▪  ▐█·\n"
+            "  ▐█ ▪▐▌ ███  ▐█▄▄▌▐█▌▐▌▐█▌\n"
+            "   ▀  ▀ . ▀    ▀▀▀ .▀▀▀ ▀▀▀"
+            "[/bold red]"
+        )
+        console.print(
+            "  [bold white]S C A N N E R[/bold white]"
+            "  [dim]─  Real-Time Internet Vulnerability Intelligence[/dim]"
+        )
+        console.print()
+
+        info = Table.grid(padding=(0, 3))
+        info.add_column(style="bold dim", min_width=12)
+        info.add_column()
+        info.add_row(
+            "SOURCES",
+            "[cyan]CT Logs (crt.sh)[/cyan]  ·  "
+            "[cyan]Wayback Machine[/cyan]  ·  "
+            "[cyan]URLScan.io[/cyan]  ·  "
+            "[cyan]S3 Buckets[/cyan]  ·  "
+            "[cyan]Active Domain Probing[/cyan]",
+        )
+        info.add_row(
+            "DETECTS",
+            "[yellow]Exposed API Keys[/yellow]  ·  "
+            "[yellow]Crypto Secrets[/yellow]  ·  "
+            "[yellow]Payment Credentials[/yellow]  ·  "
+            "[yellow]Private Keys[/yellow]  ·  "
+            "[yellow]DB Credentials[/yellow]  ·  "
+            "[yellow]Missing Security Headers[/yellow]  ·  "
+            "[yellow]Public S3 Buckets[/yellow]",
+        )
+        info.add_row(
+            "SEVERITY",
+            "[bold white on red] CRITICAL [/]  "
+            "[bold red] HIGH [/]  "
+            "[bold yellow] MEDIUM [/]  "
+            "[cyan] LOW [/]",
+        )
+        console.print(Panel(info, border_style="blue", padding=(0, 2)))
+        console.print(
+            "[dim yellow]  ⏳  Queue starts empty — crt.sh polls every 60s, "
+            "Wayback Machine loads immediately, active probing begins now.[/dim yellow]\n"
+        )
 
     def print_finding(self, finding: Finding) -> None:
-        """Print a finding panel to the terminal, skipping known duplicates."""
         if self._db:
             is_new = self._db.insert_or_update(finding)
             if not is_new:
@@ -228,19 +281,13 @@ class TerminalReporter:
                 return
         self._finding_count += 1
         self._logger.log(finding)
-        console.print(render_finding(finding))
+        console.print(render_finding(finding, self._finding_count))
 
     def print_stats(self) -> None:
-        """Print a one-line stats update."""
-        console.print(
-            render_stats_bar(self._stats, self._url_queue.qsize()),
-            highlight=False,
-        )
+        console.print(render_stats(self._stats, self._url_queue.qsize()), highlight=False)
+        print_source_status(self._url_queue.qsize(), self._stats)
 
     async def run(self, finding_queue: asyncio.Queue, stats_interval: int = 15) -> None:
-        """
-        Async loop: consume findings and periodically print stats.
-        """
         self.print_banner()
         last_stats = time.time()
 
@@ -258,14 +305,10 @@ class TerminalReporter:
                 self.print_stats()
                 last_stats = time.time()
 
-        # Final summary
         self._logger.close()
         console.print(Rule("[bold]Scan complete[/bold]"))
         self.print_stats()
         if self._logger.count:
-            console.print(f"[green]Findings saved to {self._logger.path}[/green]")
+            console.print(f"[green]✓ Findings saved to {self._logger.path}[/green]")
         if self._db and self._skipped_dupes:
-            console.print(
-                f"[dim]{self._skipped_dupes} duplicate finding(s) suppressed "
-                f"(already in database)[/dim]"
-            )
+            console.print(f"[dim]{self._skipped_dupes} duplicate(s) suppressed[/dim]")

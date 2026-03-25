@@ -315,10 +315,10 @@ class AveliScanner:
             )
 
         if enable_common_crawl:
-            from .sources.common_crawl import stream_common_crawl
+            from .sources.wayback import stream_wayback
             self._tasks.append(
                 asyncio.create_task(
-                    stream_common_crawl(self.url_queue), name="common-crawl"
+                    stream_wayback(self.url_queue), name="wayback"
                 )
             )
 

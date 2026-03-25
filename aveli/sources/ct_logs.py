@@ -1,18 +1,17 @@
 """
-Certificate Transparency Log monitor.
+Certificate Transparency Log monitor — with active path probing.
 
-Streams newly issued TLS certificates from certstream WebSocket feed,
-yielding fresh hostnames to scan. New cert issuance is a strong signal
-that a site is newly deployed or updated.
-
-Falls back to crt.sh polling if the certstream WebSocket is unavailable.
+Streams newly issued TLS certificates from certstream WebSocket feed
+(primary) and crt.sh polling (fallback). For each discovered hostname
+we now generate a set of sensitive-path probe URLs rather than just
+pushing the bare root, so the scanner actively hunts for misconfigs
+on every fresh domain instead of only checking the index page.
 """
 
 import asyncio
 import json
 import logging
 import ssl
-from typing import AsyncIterator
 
 import aiohttp
 import certifi
@@ -33,18 +32,62 @@ _HIGH_VALUE_KEYWORDS = {
     "dev", "test", "beta", "internal", "vpn", "mail", "smtp",
 }
 
+# Sensitive paths probed on every discovered domain.
+# Ordered by historical exposure frequency.
+_PROBE_PATHS = [
+    "/",
+    "/.env",
+    "/.env.local",
+    "/.env.production",
+    "/.env.backup",
+    "/wp-config.php",
+    "/.git/config",
+    "/.git/HEAD",
+    "/config.php",
+    "/database.yml",
+    "/secrets.yml",
+    "/credentials.json",
+    "/.npmrc",
+    "/.aws/credentials",
+    "/backup.sql",
+    "/dump.sql",
+    "/.htpasswd",
+    "/phpinfo.php",
+    "/adminer.php",
+    "/swagger.json",
+    "/openapi.json",
+    "/graphql",
+    "/api/v1/users",
+    "/api/users",
+    "/debug",
+    "/console",
+    "/server-status",
+    "/id_rsa",
+    "/private.key",
+]
+
 
 def _is_interesting(hostname: str) -> bool:
     """Return True if the hostname looks worth scanning."""
     hostname_lower = hostname.lower()
-    # Skip wildcards and extremely generic names
     if hostname_lower.startswith("*.") or hostname_lower in {"localhost", "example.com"}:
         return False
-    # Prioritise keywords associated with high-value targets
     for kw in _HIGH_VALUE_KEYWORDS:
         if kw in hostname_lower:
             return True
     return False
+
+
+def _expand_domain(domain: str, max_queue_size: int, queue: asyncio.Queue) -> list[str]:
+    """Return probe URLs for a domain, respecting queue capacity."""
+    urls = []
+    remaining = max_queue_size - queue.qsize()
+    for path in _PROBE_PATHS:
+        if remaining <= 0:
+            break
+        urls.append(f"https://{domain}{path}")
+        remaining -= 1
+    return urls
 
 
 async def _stream_certstream(
@@ -53,7 +96,7 @@ async def _stream_certstream(
     interesting_only: bool,
     connected_event: asyncio.Event,
 ) -> None:
-    """Connect to certstream WebSocket and push hostnames to queue."""
+    """Connect to certstream WebSocket and push probe URLs to queue."""
     try:
         import websockets  # type: ignore
     except ImportError:
@@ -61,8 +104,8 @@ async def _stream_certstream(
         return
 
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-
     retry_delay = 2
+
     while True:
         try:
             logger.info("Connecting to CT log stream: %s", CT_STREAM_URL)
@@ -73,7 +116,7 @@ async def _stream_certstream(
                 close_timeout=5,
                 ssl=ssl_ctx,
             ) as ws:
-                retry_delay = 2  # reset on successful connect
+                retry_delay = 2
                 connected_event.set()
                 logger.info("certstream connected — streaming live CT log data")
                 async for raw_msg in ws:
@@ -94,8 +137,8 @@ async def _stream_certstream(
                             continue
                         if interesting_only and not _is_interesting(domain):
                             continue
-                        if queue.qsize() < max_queue_size:
-                            await queue.put(f"https://{domain}")
+                        for url in _expand_domain(domain, max_queue_size, queue):
+                            await queue.put(url)
 
         except Exception as exc:
             connected_event.clear()
@@ -114,14 +157,12 @@ async def _poll_crtsh(
     poll_interval: int = 60,
 ) -> None:
     """
-    Poll crt.sh for recently issued certificates as a fallback CT source.
+    Poll crt.sh for recently issued certificates.
 
-    crt.sh is a reliable public CT log search engine. We query for recently
-    logged certs and extract hostnames. This runs permanently in case
-    certstream is unavailable or returns sparse data.
+    For each new domain found, generate the full sensitive-path probe
+    list and push all probe URLs to the queue.
     """
     timeout = aiohttp.ClientTimeout(total=30)
-    # Deduplicate within a polling window
     _seen_ids: set[int] = set()
     _MAX_SEEN = 50_000
 
@@ -129,19 +170,17 @@ async def _poll_crtsh(
         while True:
             try:
                 params = {
-                    "q": "%",           # all domains
+                    "q": "%",
                     "output": "json",
                     "exclude": "expired",
                     "limit": "100",
                 }
                 async with session.get(CRTSH_API, params=params) as resp:
                     if resp.status == 200:
-                        # crt.sh returns newline-delimited JSON objects
                         text = await resp.text()
                         try:
                             data = json.loads(text)
                         except json.JSONDecodeError:
-                            # Try parsing as newline-delimited JSON
                             data = []
                             for line in text.strip().splitlines():
                                 try:
@@ -149,7 +188,7 @@ async def _poll_crtsh(
                                 except Exception:
                                     pass
 
-                        count = 0
+                        new_domains: set[str] = set()
                         for cert in data:
                             cert_id = cert.get("id", 0)
                             if cert_id and cert_id in _seen_ids:
@@ -157,29 +196,29 @@ async def _poll_crtsh(
                             if cert_id:
                                 _seen_ids.add(cert_id)
                                 if len(_seen_ids) > _MAX_SEEN:
-                                    # Keep only the newest half
                                     _seen_ids = set(list(_seen_ids)[_MAX_SEEN // 2:])
 
-                            name_value = cert.get("name_value", "")
-                            common_name = cert.get("common_name", "")
-                            candidates = set()
-                            for raw in [name_value, common_name]:
-                                for part in raw.split("\n"):
+                            for field in ("name_value", "common_name"):
+                                for part in cert.get(field, "").split("\n"):
                                     part = part.strip().lstrip("*.")
                                     if part and "." in part and not part.startswith(" "):
-                                        candidates.add(part)
+                                        new_domains.add(part)
 
-                            for domain in candidates:
-                                if interesting_only and not _is_interesting(domain):
-                                    continue
-                                if queue.qsize() < max_queue_size:
-                                    await queue.put(f"https://{domain}")
-                                    count += 1
+                        probe_count = 0
+                        for domain in new_domains:
+                            if interesting_only and not _is_interesting(domain):
+                                continue
+                            for url in _expand_domain(domain, max_queue_size, queue):
+                                await queue.put(url)
+                                probe_count += 1
 
-                        if count:
-                            logger.info("crt.sh poll yielded %d new hostnames", count)
+                        if probe_count:
+                            logger.info(
+                                "crt.sh poll: %d domains → %d probe URLs queued",
+                                len(new_domains), probe_count,
+                            )
                         else:
-                            logger.debug("crt.sh poll: no new hostnames")
+                            logger.debug("crt.sh poll: no new domains")
                     else:
                         logger.debug("crt.sh returned HTTP %d", resp.status)
 
@@ -195,12 +234,14 @@ async def stream_ct_hostnames(
     interesting_only: bool = False,
 ) -> None:
     """
-    Continuously stream new hostnames from Certificate Transparency logs
-    and push them onto `queue`.
+    Continuously stream sensitive-path probe URLs derived from CT log entries.
 
     Runs two concurrent tasks:
       1. certstream WebSocket — real-time, high-volume (primary)
       2. crt.sh polling — reliable fallback, polls every 60s
+
+    Each discovered hostname is expanded into ~29 probe URLs covering
+    common sensitive paths (.env, wp-config.php, .git/config, etc.).
     """
     connected_event = asyncio.Event()
 

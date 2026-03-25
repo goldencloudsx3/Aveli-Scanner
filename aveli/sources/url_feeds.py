@@ -1,19 +1,14 @@
 """
 Supplementary URL feed sources.
 
-Aggregates targets from multiple public threat-intel / discovery feeds:
-  - AlienVault OTX pulse indicators
   - URLScan.io live search
-  - Shodan InternetDB (IP enrichment only — no API key needed)
-  - PhishTank newly submitted phishing URLs
   - OpenPhish feed
+  - Active domain probe (Tranco + HackerTarget subdomains, loops continuously)
 """
 
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 import aiohttp
 
@@ -47,6 +42,10 @@ async def stream_urlscan(
                             if url and queue.qsize() < max_queue_size:
                                 await queue.put(url)
                         logger.debug("URLScan.io yielded %d URLs", len(data.get("results", [])))
+                    elif resp.status == 429:
+                        logger.debug("URLScan rate-limited, backing off 60s")
+                        await asyncio.sleep(60)
+                        continue
             except Exception as exc:
                 logger.debug("URLScan feed error: %s", exc)
 
@@ -86,84 +85,165 @@ async def stream_openphish(
 
 
 # ---------------------------------------------------------------------------
-# Alexa/Tranco top-sites probe (static seed for baseline coverage)
+# Active domain probe — loops continuously
 # ---------------------------------------------------------------------------
 
-_TOP_SITE_PROBE_PATHS = [
+_PROBE_PATHS = [
     "/.env",
+    "/.env.local",
+    "/.env.production",
+    "/.env.backup",
     "/wp-config.php",
     "/.git/config",
+    "/.git/HEAD",
     "/config.php",
-    "/phpinfo.php",
-    "/graphql",
-    "/.npmrc",
-    "/backup.sql",
-    "/credentials.json",
-    "/secrets.yml",
     "/database.yml",
-    "/api/v1/users",
-    "/api/users",
+    "/secrets.yml",
+    "/credentials.json",
+    "/.npmrc",
+    "/.aws/credentials",
+    "/backup.sql",
+    "/dump.sql",
+    "/.htpasswd",
+    "/phpinfo.php",
+    "/adminer.php",
     "/swagger.json",
     "/openapi.json",
-    "/v1/keys",
-    "/health",
+    "/graphql",
+    "/api/v1/users",
+    "/api/users",
     "/debug",
     "/console",
-    "/adminer.php",
-    "/phpmyadmin/",
+    "/server-status",
+    "/id_rsa",
+    "/private.key",
+    "/",
 ]
+
+# Broad set of domains likely to have misconfigs — mix of CMS/framework
+# heavy sites, hosting providers, and high-traffic targets.
+# These are probed every cycle so any newly exposed file gets caught fast.
+_SEED_DOMAINS = [
+    # WordPress / PHP heavy (highest misconfiguration rate)
+    "wordpress.com", "wp.com", "wix.com", "squarespace.com",
+    "godaddy.com", "bluehost.com", "siteground.com", "hostgator.com",
+    "dreamhost.com", "a2hosting.com", "inmotionhosting.com",
+    # Dev / cloud platforms
+    "github.com", "gitlab.com", "bitbucket.org",
+    "heroku.com", "netlify.com", "vercel.com", "render.com",
+    "digitalocean.com", "linode.com", "vultr.com",
+    # E-commerce
+    "shopify.com", "bigcommerce.com", "woocommerce.com", "magento.com",
+    "prestashop.com", "opencart.com",
+    # Crypto / finance
+    "coinbase.com", "binance.com", "kraken.com", "opensea.io",
+    "blockchain.com", "etherscan.io", "metamask.io",
+    # APIs / SaaS often left misconfigured
+    "stripe.com", "paypal.com", "twilio.com", "sendgrid.com",
+    "mailchimp.com", "hubspot.com", "zendesk.com", "freshdesk.com",
+    # CMS / frameworks
+    "drupal.org", "joomla.org", "typo3.org", "contao.org",
+    # Common self-hosted stacks
+    "jenkins.io", "grafana.com", "kibana.io", "portainer.io",
+]
+
+
+async def _fetch_tranco_domains(session: aiohttp.ClientSession, count: int = 1000) -> list[str]:
+    """Fetch top domains from the Tranco list."""
+    try:
+        async with session.get(
+            "https://tranco-list.eu/api/lists/daily",
+            timeout=aiohttp.ClientTimeout(total=20),
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                list_id = data.get("list_id", "")
+                if list_id:
+                    list_url = f"https://tranco-list.eu/download_daily/{list_id}/{count}"
+                    async with session.get(list_url) as lr:
+                        if lr.status == 200:
+                            text = await lr.text()
+                            domains = []
+                            for line in text.splitlines()[:count]:
+                                parts = line.split(",")
+                                if len(parts) >= 2:
+                                    domains.append(parts[1].strip())
+                            logger.info("Tranco: loaded %d domains", len(domains))
+                            return domains
+    except Exception as exc:
+        logger.debug("Tranco fetch error: %s", exc)
+    return []
+
+
+async def _fetch_hackertarget_subdomains(
+    session: aiohttp.ClientSession, domain: str
+) -> list[str]:
+    """
+    Use HackerTarget's free API to get subdomains for a domain.
+    Returns up to ~100 subdomains per domain, no auth required.
+    """
+    try:
+        url = f"https://api.hackertarget.com/hostsearch/?q={domain}"
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            if resp.status == 200:
+                text = await resp.text()
+                if "error check your search" in text.lower() or "api count exceeded" in text.lower():
+                    return []
+                subdomains = []
+                for line in text.strip().splitlines():
+                    parts = line.split(",")
+                    if parts:
+                        sub = parts[0].strip()
+                        if sub and "." in sub:
+                            subdomains.append(sub)
+                return subdomains
+    except Exception as exc:
+        logger.debug("HackerTarget error for %s: %s", domain, exc)
+    return []
 
 
 async def probe_top_sites(
     queue: asyncio.Queue,
     max_queue_size: int = 5000,
+    interval_seconds: int = 600,
 ) -> None:
     """
-    Generate sensitive-path probes for a curated list of high-value targets
-    from the Tranco top-1M list (first 500 fetched on demand).
+    Continuously probe a large set of domains with sensitive-path requests.
+
+    Each cycle:
+      1. Fetches the Tranco top-1000 domain list
+      2. Combines with the hardcoded seed list
+      3. For each domain, queues probes for all sensitive paths
+      4. Sleeps interval_seconds then repeats
+
+    By looping, fresh targets keep entering the queue even when other
+    sources (certstream, URLScan) are unavailable.
     """
-    tranco_url = "https://tranco-list.eu/api/lists/daily"
-    top_domains: list[str] = []
+    timeout = aiohttp.ClientTimeout(total=20)
 
-    try:
-        timeout = aiohttp.ClientTimeout(total=20)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(tranco_url) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    list_id = data.get("list_id", "")
-                    if list_id:
-                        list_url = f"https://tranco-list.eu/download_daily/{list_id}/500"
-                        async with session.get(list_url) as lr:
-                            if lr.status == 200:
-                                text = await lr.text()
-                                for line in text.splitlines()[:500]:
-                                    parts = line.split(",")
-                                    if len(parts) >= 2:
-                                        top_domains.append(parts[1].strip())
-    except Exception as exc:
-        logger.debug("Tranco fetch error: %s", exc)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        while True:
+            domains = await _fetch_tranco_domains(session, count=1000)
+            if not domains:
+                logger.debug("Tranco unavailable, using seed list")
+                domains = list(_SEED_DOMAINS)
+            else:
+                # Merge seed domains to always cover high-value targets
+                domain_set = set(domains)
+                for d in _SEED_DOMAINS:
+                    if d not in domain_set:
+                        domains.append(d)
 
-    if not top_domains:
-        # Hardcoded fallback seed — common high-value targets across multiple sectors
-        top_domains = [
-            # Dev platforms
-            "github.com", "gitlab.com", "bitbucket.org", "npmjs.com",
-            "pypi.org", "hub.docker.com", "registry.npmjs.org",
-            # Cloud / infra
-            "aws.amazon.com", "console.cloud.google.com", "portal.azure.com",
-            "digitalocean.com", "heroku.com", "netlify.com", "vercel.com",
-            # Crypto / finance
-            "coinbase.com", "binance.com", "kraken.com", "opensea.io",
-            "blockchain.com", "etherscan.io",
-            # E-commerce / payments
-            "shopify.com", "stripe.com", "paypal.com", "square.com",
-            # Popular web stacks often misconfigured
-            "wordpress.com", "wp.com", "joomla.org", "drupal.org",
-        ]
+            queued = 0
+            for domain in domains:
+                for path in _PROBE_PATHS:
+                    if queue.qsize() >= max_queue_size:
+                        break
+                    await queue.put(f"https://{domain}{path}")
+                    queued += 1
 
-    for domain in top_domains:
-        for path in _TOP_SITE_PROBE_PATHS:
-            url = f"https://{domain}{path}"
-            if queue.qsize() < max_queue_size:
-                await queue.put(url)
+            logger.info(
+                "probe_top_sites: queued %d probe URLs across %d domains",
+                queued, len(domains),
+            )
+            await asyncio.sleep(interval_seconds)
