@@ -52,7 +52,7 @@ class ScannerConfig:
     user_agent: str = (
         "Mozilla/5.0 (compatible; AveliScanner/1.0; +https://github.com/aveli/scanner)"
     )
-    follow_redirects: bool = True
+    follow_redirects: bool = False
     verify_ssl: bool = False   # many targets have cert issues; scan them anyway
 
     # Connection pool — shared across ALL workers; keeps FDs under control

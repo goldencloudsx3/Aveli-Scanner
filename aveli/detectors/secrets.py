@@ -574,9 +574,10 @@ def scan_url(url: str, body: str = "") -> list[Finding]:
     for compiled_re, name, category, severity, confidence, cvss, description, remediation, tags in _SENSITIVE_URL_PATTERNS:
         if not compiled_re.search(url):
             continue
-        # Body validation: skip findings where body doesn't match expected content
-        if body and name in _URL_BODY_VALIDATORS:
-            if not _validate_body_for_url(name, url, body):
+        # Body validation: always required for sensitive file patterns.
+        # No body (redirect / empty response) or wrong content = not a real finding.
+        if name in _URL_BODY_VALIDATORS:
+            if not body or not _validate_body_for_url(name, url, body):
                 continue
         findings.append(Finding(
             url=url,

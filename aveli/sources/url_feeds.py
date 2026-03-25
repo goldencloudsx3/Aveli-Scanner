@@ -124,28 +124,20 @@ _PROBE_PATHS = [
 # heavy sites, hosting providers, and high-traffic targets.
 # These are probed every cycle so any newly exposed file gets caught fast.
 _SEED_DOMAINS = [
-    # WordPress / PHP heavy (highest misconfiguration rate)
-    "wordpress.com", "wp.com", "wix.com", "squarespace.com",
+    # WordPress / PHP-heavy hosting — highest real misconfiguration rate
+    "wordpress.org", "wp.com",
     "godaddy.com", "bluehost.com", "siteground.com", "hostgator.com",
     "dreamhost.com", "a2hosting.com", "inmotionhosting.com",
-    # Dev / cloud platforms
-    "github.com", "gitlab.com", "bitbucket.org",
-    "heroku.com", "netlify.com", "vercel.com", "render.com",
-    "digitalocean.com", "linode.com", "vultr.com",
-    # E-commerce
-    "shopify.com", "bigcommerce.com", "woocommerce.com", "magento.com",
-    "prestashop.com", "opencart.com",
-    # Crypto / finance
-    "coinbase.com", "binance.com", "kraken.com", "opensea.io",
-    "blockchain.com", "etherscan.io", "metamask.io",
-    # APIs / SaaS often left misconfigured
-    "stripe.com", "paypal.com", "twilio.com", "sendgrid.com",
-    "mailchimp.com", "hubspot.com", "zendesk.com", "freshdesk.com",
-    # CMS / frameworks
+    # Self-hosted open-source CMSs (frequently misconfigured by admins)
     "drupal.org", "joomla.org", "typo3.org", "contao.org",
-    # Common self-hosted stacks
-    "jenkins.io", "grafana.com", "kibana.io", "portainer.io",
+    # E-commerce platforms with frequent wp-config / config.php exposure
+    "prestashop.com", "opencart.com",
+    # Self-hosted infra dashboards — real exposure risk
+    "jenkins.io", "grafana.com",
 ]
+# NOTE: Major tech companies (GitHub, PayPal, Stripe, Binance, etc.) are
+# intentionally excluded. Their infrastructure is hardened and any probe
+# path returns a redirect or custom error page — 100% false positives.
 
 
 async def _fetch_tranco_domains(session: aiohttp.ClientSession, count: int = 1000) -> list[str]:
