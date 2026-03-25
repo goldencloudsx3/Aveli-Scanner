@@ -78,55 +78,59 @@ _DANGEROUS_HEADERS: list[tuple] = [
 ]
 
 
+def _is_html_response(headers: dict[str, str]) -> bool:
+    ct = headers.get("content-type", "")
+    return "text/html" in ct or "application/xhtml" in ct
+
+
 def scan_headers(url: str, headers: dict[str, str]) -> list[Finding]:
     """Analyze HTTP response headers for security issues."""
     findings: list[Finding] = []
     lower_headers = {k.lower(): v for k, v in headers.items()}
 
-    for header_name, vuln_name, severity, cvss, description, remediation, tags in _REQUIRED_HEADERS:
-        if header_name.lower() not in lower_headers:
-            findings.append(Finding(
-                url=url,
-                vuln_type=vuln_name,
-                category=VulnCategory.SECURITY_HEADER,
-                severity=severity,
-                description=description,
-                evidence=f"Header '{header_name}' absent from response",
-                confidence=1.0,
-                remediation=remediation,
-                cvss_score=cvss,
-                tags=tags,
-            ))
+    # Only check for missing browser-protection headers on HTML pages.
+    # Checking /.env, /backup.sql, etc. for missing CSP/HSTS generates noise
+    # and is misleading — those headers are only meaningful on HTML responses.
+    if _is_html_response(lower_headers):
+        for header_name, vuln_name, severity, cvss, description, remediation, tags in _REQUIRED_HEADERS:
+            if header_name.lower() not in lower_headers:
+                findings.append(Finding(
+                    url=url,
+                    vuln_type=vuln_name,
+                    category=VulnCategory.SECURITY_HEADER,
+                    severity=severity,
+                    description=description,
+                    evidence=f"Header '{header_name}' absent from response",
+                    confidence=1.0,
+                    remediation=remediation,
+                    cvss_score=cvss,
+                    tags=tags,
+                ))
 
     # Check CORS misconfiguration
+    # NOTE: ACAO:* + ACAC:true is NOT flagged — browsers hard-reject that combination per spec,
+    # making it unexploitable in any browser-based attack. Only flag configurations that
+    # are actually exploitable.
     acao = lower_headers.get("access-control-allow-origin", "")
-    acac = lower_headers.get("access-control-allow-credentials", "")
-    if acao == "*" and acac.lower() == "true":
+    acac = lower_headers.get("access-control-allow-credentials", "").lower() == "true"
+
+    if acao == "null" and acac:
+        # ACAO:null + credentials is exploitable via sandboxed iframes.
+        # An attacker's page can embed a sandboxed iframe that sends credentialed requests
+        # and the browser will attach cookies because the null origin matches.
         findings.append(Finding(
             url=url,
-            vuln_type="CORS Wildcard + Credentials",
+            vuln_type="CORS Null Origin + Credentials",
             category=VulnCategory.SECURITY_HEADER,
-            severity=Severity.CRITICAL,
-            description="CORS is configured with wildcard origin AND credentials=true. "
-                        "This is invalid per spec but some browsers/proxies may honor it.",
-            evidence="Access-Control-Allow-Origin: * with Access-Control-Allow-Credentials: true",
-            confidence=1.0,
-            remediation="Specify explicit allowed origins. Never combine wildcard with credentials.",
-            cvss_score=9.0,
-            tags=["cors", "credentials", "api"],
-        ))
-    elif acao == "*":
-        findings.append(Finding(
-            url=url,
-            vuln_type="CORS Wildcard Origin",
-            category=VulnCategory.SECURITY_HEADER,
-            severity=Severity.MEDIUM,
-            description="CORS allows requests from any origin. Evaluate if this is intentional.",
-            evidence="Access-Control-Allow-Origin: *",
-            confidence=0.85,
-            remediation="Restrict CORS to known trusted origins.",
-            cvss_score=5.4,
-            tags=["cors", "api"],
+            severity=Severity.HIGH,
+            description="CORS accepts the 'null' origin with credentials enabled. "
+                        "Attackers can exploit this via sandboxed iframes to send "
+                        "authenticated cross-origin requests and read responses.",
+            evidence="Access-Control-Allow-Origin: null with Access-Control-Allow-Credentials: true",
+            confidence=0.95,
+            remediation="Never trust the null origin. Specify explicit trusted origins only.",
+            cvss_score=8.1,
+            tags=["cors", "credentials", "null-origin"],
         ))
 
     # Check for verbose server headers
