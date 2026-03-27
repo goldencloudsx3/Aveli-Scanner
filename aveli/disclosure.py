@@ -13,7 +13,7 @@ Run via:  aveli disclose --db findings.db --output reports/
 import asyncio
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 from typing import Optional
@@ -184,7 +184,6 @@ def generate_report(
 
 def _add_days(date_str: str, days: int) -> str:
     """Return date_str + N days as YYYY-MM-DD."""
-    from datetime import timedelta
     d = datetime.strptime(date_str, "%Y-%m-%d") + timedelta(days=days)
     return d.strftime("%Y-%m-%d")
 
@@ -200,73 +199,74 @@ async def run_disclosure(db_path: Path, output_dir: Path) -> None:
 
     console = Console()
     db = FindingsDB(db_path)
-    findings = db.get_new_findings()
+    try:
+        findings = db.get_new_findings()
 
-    if not findings:
-        console.print("[yellow]No new findings in database.[/yellow]")
-        db.close()
-        return
+        if not findings:
+            console.print("[yellow]No new findings in database.[/yellow]")
+            return
 
-    # Group by domain
-    by_domain: dict[str, list[dict]] = {}
-    for f in findings:
-        domain = urlparse(f["url"]).netloc
-        by_domain.setdefault(domain, []).append(f)
+        # Group by domain
+        by_domain: dict[str, list[dict]] = {}
+        for f in findings:
+            domain = urlparse(f["url"]).netloc
+            by_domain.setdefault(domain, []).append(f)
 
-    console.print(
-        f"\n[bold]Disclosing {len(findings)} finding(s) across "
-        f"{len(by_domain)} domain(s)[/bold]\n"
-    )
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    today = datetime.now(timezone.utc).strftime("%Y%m%d")
-
-    sec_txt_results: dict[str, Optional[str]] = {}
-
-    async with aiohttp.ClientSession() as session:
-        for domain, domain_findings in by_domain.items():
-            console.print(
-                f"[cyan]{domain}[/cyan] — {len(domain_findings)} finding(s)"
-            )
-            sec_txt = await fetch_security_txt(domain, session)
-            sec_txt_results[domain] = sec_txt
-
-            if sec_txt:
-                contacts = parse_contacts(sec_txt)
-                console.print(
-                    f"  [green]security.txt[/green]: "
-                    + (", ".join(contacts) if contacts else "found but no contacts parsed")
-                )
-            else:
-                console.print("  [yellow]No security.txt found[/yellow]")
-
-            report = generate_report(domain, domain_findings, sec_txt)
-            safe = re.sub(r"[^\w.\-]", "_", domain)
-            report_path = output_dir / f"{safe}_{today}.md"
-            report_path.write_text(report, encoding="utf-8")
-            console.print(f"  Report: [dim]{report_path}[/dim]")
-
-    # Summary table
-    table = Table(title="Disclosure Summary", show_lines=True)
-    table.add_column("Domain",      style="cyan",  no_wrap=True)
-    table.add_column("Findings",    justify="right")
-    table.add_column("security.txt", justify="center")
-    table.add_column("CRITICAL",    justify="right", style="bold red")
-    table.add_column("HIGH",        justify="right", style="yellow")
-
-    for domain, domain_findings in by_domain.items():
-        n_critical = sum(1 for f in domain_findings if f["severity"] == "CRITICAL")
-        n_high = sum(1 for f in domain_findings if f["severity"] == "HIGH")
-        has_sec = "✓" if sec_txt_results.get(domain) else "✗"
-        table.add_row(
-            domain,
-            str(len(domain_findings)),
-            has_sec,
-            str(n_critical) if n_critical else "-",
-            str(n_high) if n_high else "-",
+        console.print(
+            f"\n[bold]Disclosing {len(findings)} finding(s) across "
+            f"{len(by_domain)} domain(s)[/bold]\n"
         )
 
-    console.print()
-    console.print(table)
-    console.print(f"\n[bold green]Reports written to {output_dir}/[/bold green]")
-    db.close()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now(timezone.utc).strftime("%Y%m%d")
+
+        sec_txt_results: dict[str, Optional[str]] = {}
+
+        async with aiohttp.ClientSession() as session:
+            for domain, domain_findings in by_domain.items():
+                console.print(
+                    f"[cyan]{domain}[/cyan] — {len(domain_findings)} finding(s)"
+                )
+                sec_txt = await fetch_security_txt(domain, session)
+                sec_txt_results[domain] = sec_txt
+
+                if sec_txt:
+                    contacts = parse_contacts(sec_txt)
+                    console.print(
+                        f"  [green]security.txt[/green]: "
+                        + (", ".join(contacts) if contacts else "found but no contacts parsed")
+                    )
+                else:
+                    console.print("  [yellow]No security.txt found[/yellow]")
+
+                report = generate_report(domain, domain_findings, sec_txt)
+                safe = re.sub(r"[^\w.\-]", "_", domain)
+                report_path = output_dir / f"{safe}_{today}.md"
+                report_path.write_text(report, encoding="utf-8")
+                console.print(f"  Report: [dim]{report_path}[/dim]")
+
+        # Summary table
+        table = Table(title="Disclosure Summary", show_lines=True)
+        table.add_column("Domain",      style="cyan",  no_wrap=True)
+        table.add_column("Findings",    justify="right")
+        table.add_column("security.txt", justify="center")
+        table.add_column("CRITICAL",    justify="right", style="bold red")
+        table.add_column("HIGH",        justify="right", style="yellow")
+
+        for domain, domain_findings in by_domain.items():
+            n_critical = sum(1 for f in domain_findings if f["severity"] == "CRITICAL")
+            n_high = sum(1 for f in domain_findings if f["severity"] == "HIGH")
+            has_sec = "✓" if sec_txt_results.get(domain) else "✗"
+            table.add_row(
+                domain,
+                str(len(domain_findings)),
+                has_sec,
+                str(n_critical) if n_critical else "-",
+                str(n_high) if n_high else "-",
+            )
+
+        console.print()
+        console.print(table)
+        console.print(f"\n[bold green]Reports written to {output_dir}/[/bold green]")
+    finally:
+        db.close()

@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import re
+from urllib.parse import urlparse
 
 import aiohttp
 
@@ -30,7 +31,6 @@ _BUCKET_HOST_RE = re.compile(
 
 def _bucket_root(raw_url: str) -> str:
     """Normalise any S3 URL to its bucket root (scheme + host + '/')."""
-    from urllib.parse import urlparse
     parsed = urlparse(raw_url)
     if parsed.scheme not in ("http", "https"):
         return ""

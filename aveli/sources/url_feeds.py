@@ -228,6 +228,8 @@ async def probe_top_sites(
 
             queued = 0
             for domain in domains:
+                if queue.qsize() >= max_queue_size:
+                    break
                 for path in _PROBE_PATHS:
                     if queue.qsize() >= max_queue_size:
                         break
