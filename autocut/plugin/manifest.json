@@ -1,0 +1,26 @@
+{
+  "id": "com.autocut.personal",
+  "name": "AutoCut",
+  "version": "1.0.0",
+  "manifestVersion": 5,
+  "host": [
+    { "app": "PPRO", "minVersion": "25.6.0" }
+  ],
+  "entrypoints": [
+    {
+      "type": "panel",
+      "id": "mainPanel",
+      "label": { "default": "AutoCut" },
+      "main": "index.html",
+      "minimumSize": { "width": 300, "height": 460 },
+      "maximumSize": { "width": 480, "height": 900 },
+      "preferredDockedSize": { "width": 320, "height": 580 }
+    }
+  ],
+  "requiredPermissions": {
+    "network": {
+      "domains": ["http://localhost:47821"]
+    },
+    "localFileSystem": "fullAccess"
+  }
+}
