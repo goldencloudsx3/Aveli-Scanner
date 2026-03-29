@@ -1,3 +1,4 @@
+console.warn('AutoCut bundle loaded');
 const React = require('react');
 const ReactDOM = require('react-dom/client');
 const App = require('./ui/App').default;

@@ -6,5 +6,8 @@ module.exports = {
     rules: [{ test: /\.jsx?$/, use: 'babel-loader', exclude: /node_modules/ }]
   },
   resolve: { extensions: ['.js', '.jsx'] },
-  externals: { 'premierepro': 'premierepro', 'uxp': 'uxp' }
+  externals: {
+    'premierepro': 'commonjs premierepro',
+    'uxp': 'commonjs uxp'
+  }
 };
