@@ -1,7 +1,5 @@
 // UXP persistent storage wrapper
-// Uses uxp.storage.localFileSystem to persist settings as a JSON file
-
-const uxp = require('uxp');
+// Lazily loads uxp via Function() to bypass webpack's static require transform
 
 const SETTINGS_KEY = 'autocut_settings';
 
@@ -13,8 +11,18 @@ const defaults = {
   cutMode: 'delete'
 };
 
+function getUxp() {
+  try {
+    return (new Function('return require("uxp")'))();
+  } catch {
+    return null;
+  }
+}
+
 async function getSettings() {
   try {
+    const uxp = getUxp();
+    if (!uxp) return { ...defaults };
     const { storage } = uxp.storage;
     const folder = await storage.localFileSystem.getTemporaryFolder();
     const file = await folder.getEntry(SETTINGS_KEY + '.json').catch(() => null);
@@ -28,6 +36,8 @@ async function getSettings() {
 
 async function saveSettings(settings) {
   try {
+    const uxp = getUxp();
+    if (!uxp) return;
     const { storage } = uxp.storage;
     const folder = await storage.localFileSystem.getTemporaryFolder();
     const file = await folder.createEntry(SETTINGS_KEY + '.json', { overwrite: true });

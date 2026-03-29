@@ -1,9 +1,19 @@
-const { app } = require('premierepro');
+// Lazily load premierepro via UXP's native require at runtime.
+// Using Function() bypasses webpack's static require transformation.
+function getPPro() {
+  try {
+    return (new Function('return require("premierepro")'))();
+  } catch {
+    return null;
+  }
+}
 
 // Returns the active sequence object or null
 async function getActiveSequence() {
   try {
-    const project = await app.getProject();
+    const ppro = getPPro();
+    if (!ppro) return null;
+    const project = await ppro.app.getProject();
     if (!project) return null;
     return project.activeSequence || null;
   } catch {
@@ -13,7 +23,7 @@ async function getActiveSequence() {
 
 // Returns { name, durationSecs, fps, audioTrackCount }
 async function getSequenceInfo(sequence) {
-  const duration = await sequence.getEndTime();      // in ticks
+  const duration = await sequence.getEndTime();
   const tps = sequence.ticksPerSecond;
   const durationSecs = Number(duration.ticks) / Number(tps);
   const audioTracks = await sequence.getAudioTracks();
@@ -58,34 +68,29 @@ async function getAudioClipPaths(sequence) {
   return clips;
 }
 
-// Convert seconds to Premiere ticks
 function secsToTicks(secs, ticksPerSecond) {
   return BigInt(Math.round(secs * Number(ticksPerSecond)));
 }
 
 // Apply cuts to the active sequence
-// cutPoints: [{ start: number, end: number }] — in seconds, relative to sequence start
 // mode: 'delete' (ripple delete) | 'mute' (audio keyframes)
 async function applyCuts(sequence, cutPoints, mode) {
-  // Create a single undo point wrapping all edits
   const undoGroup = await sequence.createUndoGroup('AutoCut — Apply Cuts');
-
   try {
     const tps = sequence.ticksPerSecond;
 
     if (mode === 'delete') {
-      // Process in reverse order so earlier edits don't shift later timecodes
       const sorted = [...cutPoints].sort((a, b) => b.start - a.start);
       for (const { start, end } of sorted) {
-        const startTicks = secsToTicks(start, tps);
-        const endTicks = secsToTicks(end, tps);
-        await sequence.performRippleDeleteAtRange(startTicks, endTicks);
+        await sequence.performRippleDeleteAtRange(
+          secsToTicks(start, tps),
+          secsToTicks(end, tps)
+        );
       }
     } else if (mode === 'mute') {
       const audioTracks = await sequence.getAudioTracks();
       for (const track of audioTracks) {
         for (const { start, end } of cutPoints) {
-          // Set audio volume keyframes to 0 over the silence region
           await track.setVolumeKeyframe(secsToTicks(start, tps), 100);
           await track.setVolumeKeyframe(secsToTicks(start + 0.01, tps), 0);
           await track.setVolumeKeyframe(secsToTicks(end - 0.01, tps), 0);
