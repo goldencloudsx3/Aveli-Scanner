@@ -6,6 +6,18 @@
 </head>
 <body>
   <div id="root"></div>
+  <script>
+    console.warn('AutoCut: HTML inline script running');
+    console.warn('AutoCut: require available =', typeof require !== 'undefined');
+    if (typeof require !== 'undefined') {
+      try {
+        var uxpTest = require('uxp');
+        console.warn('AutoCut: uxp loaded ok');
+      } catch(e) {
+        console.warn('AutoCut: uxp load failed', e.message);
+      }
+    }
+  </script>
   <script src="bundle.js"></script>
 </body>
 </html>
