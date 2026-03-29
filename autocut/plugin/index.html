@@ -2,26 +2,20 @@
 <html>
 <head>
   <meta charset="UTF-8" />
-  <style>
-    body { background: #1a1a1a; color: #e8e8e8; font-family: sans-serif; padding: 16px; }
-    h2 { color: #4a9eff; }
-  </style>
+  <link rel="stylesheet" href="main.css" />
 </head>
 <body>
-  <h2>AutoCut</h2>
-  <p id="status">Loading...</p>
-  <script>
-    console.warn('AutoCut: panel HTML is running');
-    document.getElementById('status').textContent = 'Panel loaded. JS is working.';
-    try {
-      var uxp = (new Function('return require("uxp")'))();
-      console.warn('AutoCut: uxp ok', typeof uxp);
-      document.getElementById('status').textContent = 'UXP loaded OK. Full app starting...';
-    } catch(e) {
-      console.warn('AutoCut: uxp error', e.message);
-      document.getElementById('status').textContent = 'UXP error: ' + e.message;
-    }
-  </script>
+  <!-- React root element - REQUIRED for React to mount -->
+  <div id="root"></div>
+
+  <!-- Fallback message if JS fails to load -->
+  <noscript>
+    <p style="color: #e8e8e8; padding: 16px;">
+      AutoCut requires JavaScript. Please enable JavaScript and reload.
+    </p>
+  </noscript>
+
+  <!-- Bundle script - must be run after root element exists -->
   <script src="bundle.js"></script>
 </body>
 </html>

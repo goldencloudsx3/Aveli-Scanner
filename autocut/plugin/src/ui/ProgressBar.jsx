@@ -21,7 +21,7 @@ export default function ProgressBar({ stage, percent, message, onCancel }) {
         <span className="progress-time">{fmt(elapsed)}</span>
       </div>
       {message && <div className="progress-message">{message}</div>}
-      <button className="btn btn-danger" onClick={onCancel}>Cancel</button>
+      {onCancel && <button className="btn btn-danger" onClick={onCancel}>Cancel</button>}
     </div>
   );
 }
