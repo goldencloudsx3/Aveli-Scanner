@@ -3,6 +3,7 @@
   "name": "AutoCut",
   "version": "1.0.0",
   "manifestVersion": 5,
+  "main": "main.js",
   "host": [
     { "app": "PPRO", "minVersion": "25.6.0" }
   ],
