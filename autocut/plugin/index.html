@@ -2,20 +2,24 @@
 <html>
 <head>
   <meta charset="UTF-8" />
-  <link rel="stylesheet" href="main.css" />
+  <style>
+    body { background: #1a1a1a; color: #e8e8e8; font-family: sans-serif; padding: 16px; }
+    h2 { color: #4a9eff; }
+  </style>
 </head>
 <body>
-  <div id="root"></div>
+  <h2>AutoCut</h2>
+  <p id="status">Loading...</p>
   <script>
-    console.warn('AutoCut: HTML inline script running');
-    console.warn('AutoCut: require available =', typeof require !== 'undefined');
-    if (typeof require !== 'undefined') {
-      try {
-        var uxpTest = require('uxp');
-        console.warn('AutoCut: uxp loaded ok');
-      } catch(e) {
-        console.warn('AutoCut: uxp load failed', e.message);
-      }
+    console.warn('AutoCut: panel HTML is running');
+    document.getElementById('status').textContent = 'Panel loaded. JS is working.';
+    try {
+      var uxp = (new Function('return require("uxp")'))();
+      console.warn('AutoCut: uxp ok', typeof uxp);
+      document.getElementById('status').textContent = 'UXP loaded OK. Full app starting...';
+    } catch(e) {
+      console.warn('AutoCut: uxp error', e.message);
+      document.getElementById('status').textContent = 'UXP error: ' + e.message;
     }
   </script>
   <script src="bundle.js"></script>
